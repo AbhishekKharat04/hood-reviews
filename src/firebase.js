@@ -3,7 +3,7 @@ import { getFirestore } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBYwXCyFINDotTAzDEGn1-Srje6QYCYTN8",
+  apiKey: "AIzaSyBYvXCyFlNDotTAzDEGn1-Srje6QYCYTN8",
   authDomain: "hood-reviews.firebaseapp.com",
   projectId: "hood-reviews",
   storageBucket: "hood-reviews.firebasestorage.app",
