@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { auth, googleProvider, db } from "./firebase.js";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
-import { collection, query, orderBy, onSnapshot, setDoc, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, setDoc, deleteDoc, doc, updateDoc, increment } from "firebase/firestore";
 
 const FontLink = () => {
   useEffect(() => {
@@ -181,14 +181,16 @@ function CatChip({id,selected,onClick}){
 }
 
 // ── ReviewCard ──
-function ReviewCard({r,onDelete}){
+function ReviewCard({r,onDelete,currentUser,onFire}){
   const [images,setImages]=useState([]);
   const [activeImg,setActiveImg]=useState(null);
   const [exp,setExp]=useState(false);
+  const [fired,setFired]=useState(false);
   const cat=catInfo(r.category);
   const rc=ratingColor(r.rating);
   const cn=countryInfo(r.countryCode||"OTHER");
   const ytId=r.videoUrl?getYtId(r.videoUrl):null;
+  const isOwner=currentUser&&((r.uid&&r.uid===currentUser.uid)||(!r.uid&&r.author===currentUser.name));
 
   useEffect(()=>{
     if(!r.imageCount)return;
@@ -200,6 +202,8 @@ function ReviewCard({r,onDelete}){
       setImages(imgs);
     })();
   },[r.id,r.imageCount]);
+
+  function handleFire(){ if(fired)return; setFired(true); onFire?.(r.id); }
 
   return(
     <div style={{background:"#141414",borderRadius:16,border:"1px solid #1E1E1E",overflow:"hidden"}}>
@@ -290,8 +294,18 @@ function ReviewCard({r,onDelete}){
             </div>
             <span style={{fontSize:12,color:"#555",fontFamily:"'Outfit',sans-serif"}}>{r.author||"Anonymous"}</span>
           </div>
-          <button onClick={()=>onDelete(r.id)} style={{background:"none",border:"none",color:"#333",
-            fontSize:12,cursor:"pointer",fontFamily:"'Outfit',sans-serif"}}>remove</button>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <button onClick={handleFire} style={{background:"none",border:fired?"1px solid #FF950044":"none",
+              borderRadius:99,padding:"3px 8px",color:fired?"#FF9500":"#444",
+              fontSize:12,cursor:fired?"default":"pointer",fontFamily:"'Outfit',sans-serif",
+              display:"flex",alignItems:"center",gap:3,transition:"all 0.2s"}}>
+              🔥 {r.fires||0}
+            </button>
+            {isOwner&&(
+              <button onClick={()=>onDelete(r.id)} style={{background:"none",border:"none",color:"#333",
+                fontSize:12,cursor:"pointer",fontFamily:"'Outfit',sans-serif"}}>remove</button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -357,7 +371,12 @@ export default function App(){
       if(fu){
         setUser({ name: fu.displayName || fu.email || "User", provider:"google", uid: fu.uid });
       } else {
-        try{ const g=localStorage.getItem("hoodrev_guest"); if(g) setUser(JSON.parse(g)); }catch(_){}
+        setUser(prev=>{
+          if(prev?.provider==="google") return null; // Google user signed out
+          if(prev) return prev;                      // Guest already browsing — keep them
+          try{ const g=localStorage.getItem("hoodrev_guest"); if(g) return JSON.parse(g); }catch(_){}
+          return null;
+        });
       }
       setLoading(false);
     });
@@ -408,6 +427,10 @@ export default function App(){
     try{ await deleteDoc(doc(db,"reviews",id)); }catch(_){}
   }
 
+  async function fireReview(id){
+    try{ await updateDoc(doc(db,"reviews",id),{fires:increment(1)}); }catch(_){}
+  }
+
   async function submitReview(){
     if(!form.placeName.trim())  return setFormErr("Give the place a name.");
     if(!form.category)          return setFormErr("Pick a category.");
@@ -415,7 +438,7 @@ export default function App(){
     if(!form.postalCode.trim()) return setFormErr("Enter your postal/ZIP code.");
     setFormErr("");
     const id=Date.now().toString();
-    const nr={...form,id,createdAt:Date.now(),author:user?.name||"You",imageCount:uploadedImgs.length};
+    const nr={...form,id,createdAt:Date.now(),author:user?.name||"You",imageCount:uploadedImgs.length,uid:user?.uid||null,fires:0};
     for(let i=0;i<uploadedImgs.length;i++) try{ await window.storage.set(`img_${id}_${i}`,uploadedImgs[i]); }catch(_){}
     try{ await setDoc(doc(db,"reviews",id), nr); }catch(_){}
     setForm(INIT_FORM); setUploadedImgs([]);
@@ -493,7 +516,7 @@ export default function App(){
                   </button>
                 ))}
               </div>
-              <button onClick={()=>{setUser({name:"Guest",provider:"guest"});toast("Browsing as guest 👀");}}
+              <button onClick={()=>{const g={name:"Guest",provider:"guest"};setUser(g);try{localStorage.setItem("hoodrev_guest",JSON.stringify(g));}catch(_){}toast("Browsing as guest 👀");}}
                 style={{background:"none",border:"none",color:"#444",fontSize:13,
                   cursor:"pointer",marginTop:20,fontFamily:"'Outfit',sans-serif",padding:0}}>
                 Just browse (no account) →
@@ -547,8 +570,10 @@ export default function App(){
           <span style={{fontSize:18,fontWeight:800,fontFamily:"'Syne',sans-serif",
             letterSpacing:"-0.5px",color:"#F0EFE8"}}>HOOD <span style={{color:"#FF9500"}}>★</span></span>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:12,color:"#444"}}>{user.name}</span>
-            <div onClick={logout} title="Tap to sign out" style={{width:32,height:32,borderRadius:99,
+            <button onClick={logout} style={{background:"none",border:"1px solid #2A2A2A",
+              borderRadius:99,padding:"4px 10px",color:"#666",fontSize:12,cursor:"pointer",
+              fontFamily:"'Outfit',sans-serif"}}>Sign out</button>
+            <div onClick={()=>setTab("me")} title="Your profile" style={{width:32,height:32,borderRadius:99,
               background:"#FF9500",display:"flex",alignItems:"center",justifyContent:"center",
               fontSize:13,fontWeight:700,color:"#0C0C0C",cursor:"pointer"}}>
               {user.name[0].toUpperCase()}
@@ -623,7 +648,7 @@ export default function App(){
                 <p style={{margin:"0 0 10px",fontSize:11,color:"#444",letterSpacing:"0.12em",
                   textTransform:"uppercase",fontWeight:600}}>Recent activity</p>
                 <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                  {reviews.slice(0,3).map(r=><ReviewCard key={r.id} r={r} onDelete={deleteReview}/>)}
+                  {reviews.slice(0,3).map(r=><ReviewCard key={r.id} r={r} onDelete={deleteReview} currentUser={user} onFire={fireReview}/>)}
                   {reviews.length>3&&(
                     <button onClick={()=>{setBrowsePC("");setBrowseCo("ALL");setTab("browse");}}
                       style={{background:"#141414",border:"1px solid #222",borderRadius:12,
@@ -709,7 +734,7 @@ export default function App(){
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                {filteredReviews.map(r=><ReviewCard key={r.id} r={r} onDelete={deleteReview}/>)}
+                {filteredReviews.map(r=><ReviewCard key={r.id} r={r} onDelete={deleteReview} currentUser={user} onFire={fireReview}/>)}
               </div>
             )}
           </div>
@@ -875,11 +900,67 @@ export default function App(){
           </div>
         )}
 
+        {/* ── ME ── */}
+        {tab==="me"&&(
+          <div style={{padding:"22px 20px 0"}}>
+            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:24}}>
+              <div style={{width:56,height:56,borderRadius:99,
+                background:"linear-gradient(135deg,#FF9500,#FF3B6B)",
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontSize:24,fontWeight:700,color:"#0C0C0C"}}>
+                {user.name[0].toUpperCase()}
+              </div>
+              <div>
+                <p style={{margin:0,fontSize:20,fontWeight:800,fontFamily:"'Syne',sans-serif",color:"#F0EFE8"}}>{user.name}</p>
+                <p style={{margin:"3px 0 0",fontSize:12,color:"#555",fontFamily:"'Outfit',sans-serif"}}>
+                  {user.provider==="google"?"🔐 Google account":"👤 Guest"}
+                </p>
+              </div>
+            </div>
+            {(()=>{
+              const myReviews=reviews.filter(r=>user.uid?r.uid===user.uid:r.author===user.name);
+              const totalFires=myReviews.reduce((s,r)=>s+(r.fires||0),0);
+              return(
+                <>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:24}}>
+                    {[{n:myReviews.length,l:"Reviews posted"},{n:totalFires,l:"🔥 Fires received"}].map(({n,l})=>(
+                      <div key={l} style={{background:"#141414",border:"1px solid #1E1E1E",borderRadius:14,padding:"16px"}}>
+                        <p style={{margin:0,fontSize:32,fontWeight:800,color:"#FF9500",fontFamily:"'Syne',sans-serif"}}>{n}</p>
+                        <p style={{margin:"4px 0 0",fontSize:12,color:"#555",fontFamily:"'Outfit',sans-serif"}}>{l}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{margin:"0 0 12px",fontSize:11,color:"#444",letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:600}}>Your reviews</p>
+                  {myReviews.length===0?(
+                    <div style={{background:"#141414",border:"1px dashed #222",borderRadius:16,padding:"36px 24px",textAlign:"center"}}>
+                      <p style={{margin:"0 0 8px",fontSize:32}}>✍️</p>
+                      <p style={{margin:"0 0 6px",fontSize:16,fontWeight:600,color:"#F0EFE8",fontFamily:"'Syne',sans-serif"}}>No reviews yet</p>
+                      <p style={{margin:"0 0 18px",fontSize:13,color:"#555"}}>Be the first voice in your area.</p>
+                      <button onClick={()=>setTab("write")} style={{background:"#FF9500",color:"#0C0C0C",
+                        border:"none",borderRadius:10,padding:"10px 22px",
+                        fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"'Syne',sans-serif"}}>WRITE NOW →</button>
+                    </div>
+                  ):(
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {myReviews.map(r=><ReviewCard key={r.id} r={r} onDelete={deleteReview} currentUser={user} onFire={fireReview}/>)}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+            <button onClick={logout} style={{width:"100%",marginTop:24,padding:"13px",
+              borderRadius:12,border:"1px solid #2A2A2A",background:"transparent",
+              color:"#FF453A",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Outfit',sans-serif"}}>
+              Sign Out
+            </button>
+          </div>
+        )}
+
         {/* ── BOTTOM NAV ── */}
         <div style={{position:"sticky",bottom:0,background:"#0C0C0Cee",backdropFilter:"blur(12px)",
-          borderTop:"1px solid #181818",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",
+          borderTop:"1px solid #181818",display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",
           padding:"8px 0 14px",marginTop:36}}>
-          {[{id:"home",icon:"⌂",label:"Home"},{id:"browse",icon:"◉",label:"Browse"},{id:"write",icon:"+",label:"Review"}].map(t=>(
+          {[{id:"home",icon:"⌂",label:"Home"},{id:"browse",icon:"◉",label:"Browse"},{id:"write",icon:"+",label:"Review"},{id:"me",icon:"★",label:"You"}].map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{background:"none",border:"none",
               display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",
               color:tab===t.id?"#FF9500":"#444",transition:"color 0.15s"}}>
