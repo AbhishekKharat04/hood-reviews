@@ -1,38 +1,23 @@
 /**
- * storage.js — Local storage adapter that mimics the window.storage API
- * used in the Claude-generated code. Data persists in the browser's
- * localStorage so reviews survive page refreshes.
- *
- * When you're ready to share your app with the world, swap this out
- * for the Firebase version described in the README.
+ * storage.js — Firestore adapter
+ * Images and small key-value data are stored as individual Firestore
+ * documents in the "storage" collection. Reviews have their own
+ * "reviews" collection (managed directly in App.jsx with onSnapshot).
  */
+import { db } from "./firebase.js";
+import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
 
 window.storage = {
-  /**
-   * Read a key from localStorage.
-   * Returns { value } if found, or null if not.
-   */
   get: async (key) => {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return null;
-    return { value: raw };
+    const d = await getDoc(doc(db, "storage", key));
+    return d.exists() ? { value: d.data().value } : null;
   },
-
-  /**
-   * Write a value (string) to localStorage.
-   * Returns { key, value }.
-   */
   set: async (key, value) => {
-    localStorage.setItem(key, value);
+    await setDoc(doc(db, "storage", key), { value });
     return { key, value };
   },
-
-  /**
-   * Delete a key from localStorage.
-   * Returns { key, deleted: true }.
-   */
   delete: async (key) => {
-    localStorage.removeItem(key);
+    await deleteDoc(doc(db, "storage", key));
     return { key, deleted: true };
   },
 };

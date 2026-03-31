@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import { auth, googleProvider, db } from "./firebase.js";
+import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
+import { collection, query, orderBy, onSnapshot, setDoc, deleteDoc, doc } from "firebase/firestore";
 
 const FontLink = () => {
   useEffect(() => {
@@ -348,39 +351,61 @@ export default function App(){
   const [homePC,setHomePC]             = useState("");
   const [loading,setLoading]           = useState(true);
 
+  // Firebase auth — keeps user logged in across sessions
   useEffect(()=>{
-    (async()=>{
-      try{
-        const rv=await window.storage.get("hoodrev_v3"); if(rv)setReviews(JSON.parse(rv.value));
-        const usr=await window.storage.get("hoodrev_user"); if(usr)setUser(JSON.parse(usr.value));
-      }catch(_){}
+    const unsub = onAuthStateChanged(auth, (fu)=>{
+      if(fu){
+        setUser({ name: fu.displayName || fu.email || "User", provider:"google", uid: fu.uid });
+      } else {
+        try{ const g=localStorage.getItem("hoodrev_guest"); if(g) setUser(JSON.parse(g)); }catch(_){}
+      }
       setLoading(false);
-    })();
+    });
+    return ()=>unsub();
   },[]);
 
-  async function persistReviews(updated){
-    setReviews(updated);
-    try{ await window.storage.set("hoodrev_v3",JSON.stringify(updated)); }catch(_){}
-  }
+  // Firestore real-time reviews — all users see the same reviews instantly
+  useEffect(()=>{
+    const q = query(collection(db,"reviews"), orderBy("createdAt","desc"));
+    const unsub = onSnapshot(q, (snap)=>{
+      setReviews(snap.docs.map(d=>({ ...d.data(), id: d.id })));
+    }, ()=>{});
+    return ()=>unsub();
+  },[]);
 
   function toast(msg){ setToastMsg(msg); setTimeout(()=>setToastMsg(""),2800); }
 
-  function pickProvider(pid){ setAuthProvider(pid); setAuthStep("name"); }
+  async function pickProvider(pid){
+    if(pid==="google"){
+      try{
+        await signInWithPopup(auth, googleProvider);
+        toast("Welcome! 🔥");
+      } catch(e){
+        if(e.code!=="auth/popup-closed-by-user") toast("Sign-in failed, try again.");
+      }
+    } else {
+      setAuthProvider(pid); setAuthStep("name");
+    }
+  }
 
-  async function confirmName(){
+  function confirmName(){
     if(!nameInput.trim())return;
-    const u={name:nameInput.trim(),provider:authProvider};
+    const u={name:nameInput.trim(),provider:authProvider||"guest"};
     setUser(u);
-    try{ await window.storage.set("hoodrev_user",JSON.stringify(u)); }catch(_){}
+    try{ localStorage.setItem("hoodrev_guest", JSON.stringify(u)); }catch(_){}
     setAuthStep("splash"); setNameInput(""); toast(`Welcome, ${u.name}! 🔥`);
   }
 
-  function logout(){ setUser(null); try{ window.storage.delete("hoodrev_user"); }catch(_){} setTab("home"); }
+  function logout(){
+    if(user?.provider==="google"){ signOut(auth); }
+    else { try{ localStorage.removeItem("hoodrev_guest"); }catch(_){} }
+    setUser(null); setTab("home");
+  }
 
   async function deleteReview(id){
     const r=reviews.find(rv=>rv.id===id);
     if(r?.imageCount){ for(let i=0;i<r.imageCount;i++) try{ await window.storage.delete(`img_${id}_${i}`); }catch(_){} }
-    persistReviews(reviews.filter(rv=>rv.id!==id));
+    try{ await deleteDoc(doc(db,"reviews",id)); }catch(_){}
   }
 
   async function submitReview(){
@@ -392,7 +417,7 @@ export default function App(){
     const id=Date.now().toString();
     const nr={...form,id,createdAt:Date.now(),author:user?.name||"You",imageCount:uploadedImgs.length};
     for(let i=0;i<uploadedImgs.length;i++) try{ await window.storage.set(`img_${id}_${i}`,uploadedImgs[i]); }catch(_){}
-    persistReviews([nr,...reviews]);
+    try{ await setDoc(doc(db,"reviews",id), nr); }catch(_){}
     setForm(INIT_FORM); setUploadedImgs([]);
     setBrowsePC(form.postalCode); setBrowseCo(form.countryCode);
     setTab("browse"); toast("Review posted! 🔥");
